@@ -1,0 +1,485 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="color-scheme" content="light dark" />
+<link rel="icon" href="data:," />
+<title>Raft 源码调研报告</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@600;700;900&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+:root{
+--bg:#f6f6f3; --surface:#ffffff; --surface2:#efefea; --ink:#171a1e; --ink2:#4c5257; --ink3:#7d838a;
+--line:#dddcd4; --accent:#c2410c; --accent-soft:#fbe9dd; --good:#1d7a4f; --good-soft:#e2f2e8;
+--warn:#a35b00; --warn-soft:#fdf0d9; --bad:#b3271e; --bad-soft:#fbe7e4;
+--code-bg:#eceae2;
+--shadow:0 1px 2px rgba(20,20,20,.05),0 8px 24px rgba(20,20,20,.05);
+}
+@media (prefers-color-scheme: dark){
+:root{
+--bg:#101315; --surface:#181c1f; --surface2:#1f2428; --ink:#eceee9; --ink2:#b6bcc0; --ink3:#858d92;
+--line:#2c3338; --accent:#ff8a4c; --accent-soft:#3a2417; --good:#4cc38a; --good-soft:#173327;
+--warn:#f5b544; --warn-soft:#3a2c10; --bad:#ff7a6e; --bad-soft:#3c1d19;
+--code-bg:#22282c;
+--shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px rgba(0,0,0,.25);
+}
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);
+font-family:"Noto Sans SC",-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+font-size:16px;line-height:1.75;-webkit-font-smoothing:antialiased}
+.mono{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+a{color:var(--accent);text-decoration:none;overflow-wrap:anywhere}
+a:hover{text-decoration:underline}
+.wrap{max-width:920px;margin:0 auto;padding:0 20px}
+
+/* ---------- top nav ---------- */
+nav.toc{position:sticky;top:0;z-index:50;background:color-mix(in srgb,var(--bg) 88%,transparent);
+backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+nav.toc.wrap{display:flex;gap:4px;overflow-x:auto;padding-top:10px;padding-bottom:10px;scrollbar-width:none}
+nav.toc.wrap::-webkit-scrollbar{display:none}
+nav.toc a{flex:0 0 auto;color:var(--ink2);font-size:13.5px;font-weight:500;padding:5px 11px;border-radius:999px;white-space:nowrap}
+nav.toc a:hover{text-decoration:none;color:var(--ink)}
+nav.toc a.on{background:var(--ink);color:var(--bg)}
+
+/* ---------- hero ---------- */
+header.hero{padding:52px 0 8px}
+.kicker{font-size:13px;letter-spacing:.14em;color:var(--accent);font-weight:700}
+h1{font-family:"Noto Serif SC",serif;font-weight:900;font-size:clamp(34px,6vw,52px);line-height:1.2;margin:12px 0 6px}
+.en-sub{font-family:"IBM Plex Mono",monospace;font-size:14px;color:var(--ink3)}
+.verdict{font-size:19px;line-height:1.7;margin:22px 0 0;max-width:46em}
+.verdict strong{color:var(--accent)}
+.meta-line{margin-top:16px;font-size:13.5px;color:var(--ink3)}
+.stats{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin:30px 0 6px}
+.stat{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 14px 10px;box-shadow:var(--shadow)}
+.stat.n{font-family:"IBM Plex Mono",monospace;font-size:24px;font-weight:600;line-height:1.15}
+.stat.l{font-size:12.5px;color:var(--ink2);margin-top:4px;line-height:1.45}
+@media (max-width:640px){.stats{grid-template-columns:repeat(2,1fr)}.stat:last-child{grid-column:span 2}}
+
+/* ---------- sections ---------- */
+section{padding:38px 0 6px}
+h2{font-family:"Noto Serif SC",serif;font-weight:700;font-size:27px;line-height:1.35;margin:0 0 6px;display:flex;align-items:baseline;gap:12px}
+h2.no{font-family:"IBM Plex Mono",monospace;font-size:15px;color:var(--accent);font-weight:600}
+h3{font-size:18px;font-weight:700;margin:26px 0 8px}
+p{margin:10px 0}
+.lead{color:var(--ink2)}
+ul{margin:8px 0;padding-left:22px}
+li{margin:6px 0}
+code{font-family:"IBM Plex Mono",monospace;font-size:.86em;background:var(--code-bg);padding:1px 6px;border-radius:5px;overflow-wrap:anywhere}
+.src{font-size:12.5px;color:var(--ink3)}
+.tag{display:inline-block;font-size:11.5px;font-weight:700;padding:1px 8px;border-radius:999px;vertical-align:2px;margin-right:6px;white-space:nowrap}
+.tag.p{background:var(--good-soft);color:var(--good)}
+.tag.s{background:var(--warn-soft);color:var(--warn)}
+.tag.u{background:var(--bad-soft);color:var(--bad)}
+
+/* hard findings */
+.findings{display:flex;flex-direction:column;gap:12px;margin-top:18px}
+.finding{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px 20px;box-shadow:var(--shadow);display:flex;gap:16px}
+.finding.num{font-family:"Noto Serif SC",serif;font-size:30px;font-weight:900;color:var(--accent);line-height:1.1;flex:0 0 auto}
+.finding h4{margin:2px 0 6px;font-size:17px}
+.finding p{margin:0;color:var(--ink2);font-size:15px}
+
+/* tables */
+.tbl{margin:14px 0;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:14.5px}
+@media (max-width:640px){
+  table{font-size:13.5px}
+  th,td{padding:8px 10px;overflow-wrap:anywhere}
+  th{white-space:normal}
+}
+th,td{padding:10px 14px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+tr:last-child td{border-bottom:none}
+th{background:var(--surface2);font-weight:700;font-size:13.5px;white-space:nowrap}
+td.mono{font-size:13px}
+.yes{color:var(--good);font-weight:700}.no{color:var(--bad);font-weight:700}
+
+/* flow diagram */
+.flow{display:flex;flex-wrap:wrap;align-items:stretch;gap:8px;margin:16px 0}
+.flow.node{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 14px;font-size:14px;box-shadow:var(--shadow);flex:1 1 150px}
+.flow.node b{display:block;font-size:14.5px}
+.flow.node span{color:var(--ink2);font-size:13px}
+.flow.arr{align-self:center;color:var(--accent);font-weight:700;font-size:18px;flex:0 0 auto}
+@media (max-width:640px){.flow{flex-direction:column}.flow.arr{transform:rotate(90deg);align-self:center}}
+
+.callout{border-radius:12px;padding:16px 20px;margin:16px 0;font-size:15px}
+.callout.warn{background:var(--warn-soft)}
+.callout.bad{background:var(--bad-soft)}
+.callout.good{background:var(--good-soft)}
+.callout p{margin:4px 0}
+.callout.t{font-weight:700}
+
+blockquote{margin:16px 0;padding:14px 20px;border-left:3px solid var(--accent);background:var(--surface);border-radius:0 10px 10px 0;font-size:15.5px}
+blockquote.src{display:block;margin-top:6px}
+
+/* mindmap */
+.mm-tools{display:flex;gap:8px;margin:14px 0 4px}
+.mm-tools button{font:inherit;font-size:13.5px;font-weight:500;padding:6px 14px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);cursor:pointer}
+.mm-tools button:hover{border-color:var(--accent);color:var(--accent)}
+.mm{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px 20px;box-shadow:var(--shadow);overflow-x:auto}
+.mm ul{list-style:none;margin:0;padding-left:22px;position:relative}
+.mm>ul{padding-left:0}
+.mm li{margin:5px 0;position:relative}
+.mm ul ul::before{content:"";position:absolute;left:7px;top:-2px;bottom:10px;border-left:1px solid var(--line)}
+.mm.row{display:flex;align-items:baseline;gap:7px}
+.mm.tw{flex:0 0 auto;width:18px;height:18px;border:1px solid var(--line);border-radius:5px;background:var(--surface2);color:var(--ink2);font-size:12px;line-height:1;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;transform:translateY(3px);padding:0;font-family:inherit}
+.mm.tw:hover{border-color:var(--accent);color:var(--accent)}
+.mm.leaf-dot{flex:0 0 auto;width:18px;text-align:center;color:var(--ink3);transform:translateY(1px)}
+.mm.txt{font-size:14.5px}
+.mm.root>.row>.txt{font-family:"Noto Serif SC",serif;font-weight:900;font-size:19px}
+.mm.l1>.row>.txt{font-weight:700;font-size:15.5px}
+.mm.note{color:var(--ink3);font-size:13px}
+.mm li.closed>ul{display:none}
+
+.cards{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:14px 0}
+@media (max-width:640px){.cards{grid-template-columns:1fr}}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px 18px;box-shadow:var(--shadow)}
+.card h4{margin:0 0 8px;font-size:16px}
+.card ul{padding-left:18px;margin:4px 0}
+.card li{font-size:14.5px;margin:4px 0}
+
+.versions{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}
+.ver-chip{background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:5px 14px;font-size:13.5px}
+.ver-chip b{font-family:"IBM Plex Mono",monospace;font-weight:600}
+
+footer{margin-top:48px;padding:26px 0 44px;border-top:1px solid var(--line);color:var(--ink3);font-size:13.5px}
+footer ul{padding-left:18px}
+footer li{margin:3px 0;font-size:13px}
+</style>
+</head>
+<body>
+<nav class="toc" aria-label="目录">
+<div class="wrap">
+<a href="#findings">核心发现</a>
+<a href="#mindmap">思维导图</a>
+<a href="#basics">公司</a>
+<a href="#arch">架构</a>
+<a href="#security">权限与安全</a>
+<a href="#oar">oar 关系</a>
+<a href="#license">许可</a>
+<a href="#open">未核实</a>
+</div>
+</nav>
+
+<header class="hero">
+<div class="wrap">
+<div class="kicker">SOURCE-AVAILABLE 项目深度调研 · RAFT-SOURCE RESEARCH</div>
+<h1>Raft：把编程 agent 变成服务器里的长期队友</h1>
+<div class="en-sub">github.com/botiverse/raft-source · raft.build · agent-native workspace</div>
+<p class="verdict">一句话结论：Raft 是 <strong>Botiverse, Inc.</strong> 的 agent 原生工作区——每个 agent 有持久身份、记忆与能力范围，以真进程跑在真机器上，在频道/私信/任务里与人并肩协作；12 种 runtime 可混搭，用的是你自己的模型订阅。代码<strong>看得见但不是开源</strong>：许可证是 <strong>FSL-1.1-ALv2</strong>（source-available），仓库只是私有开发的单向发布镜像。</p>
+<p class="meta-line">调研日期 2026-10-14 · 数据截至当日 · 来源按仓库/官网原文与媒体/指南分级标注，链接见各节与文末</p>
+<div class="stats">
+<div class="stat"><div class="n">596</div><div class="l">GitHub stars / 114 forks（2026-10-14，一个月内）</div></div>
+<div class="stat"><div class="n">12</div><div class="l">种 runtime driver，可混搭（Kimi Code 为新首选）</div></div>
+<div class="stat"><div class="n">9</div><div class="l">个包：server / daemon / computer / web / cli / sdk / sync-core…</div></div>
+<div class="stat"><div class="n">v1.21.12</div><div class="l">当前快照版本（-source.1），一 release 一 snapshot commit</div></div>
+<div class="stat"><div class="n">FSL-1.1-ALv2</div><div class="l">LICENSE 逐字核对；满两年转 Apache-2.0；商标另行保留</div></div>
+</div>
+</div>
+</header>
+
+<main class="wrap">
+
+<!-- ============ 核心发现 ============ -->
+<section id="findings">
+<h2><span class="no">§0</span>五条核心发现</h2>
+<div class="findings">
+<div class="finding"><div class="num">1</div><div><h4>"看得见"不等于"开源"</h4><p>许可证是 FSL-1.1-ALv2——可读、可运行、可改，但不许拿去做与 Raft 竞争的商业产品/服务；每个版本发布满两年后自动转为 Apache-2.0。GitHub 显示 Other/NOASSERTION 是因为 FSL 不在 SPDX 名单里。</p></div></div>
+<div class="finding"><div class="num">2</div><div><h4>仓库是单向发布镜像</h4><p>私有仓库开发，每个 release 只导出一个 snapshot commit（当前 v1.21.12-source.1），不收 PR、不开 Issues；snapshot 由自家 agent 提交（作者 <span class="mono">Tenny &lt;raft+tenny@agents.stamp.build&gt;</span>）。</p></div></div>
+<div class="finding"><div class="num">3</div><div><h4>Raft 的 daemon 依赖 oar</h4><p><span class="mono">packages/daemon/package.json</span> 声明 <span class="mono">"@botiverse/oar": "0.56.0"</span>（Apache-2.0 的开源库）。oar 在这里负责 runtime 侧的账号用量采集与适配（<span class="mono">runtimeAccountUsage/oarAdapter.ts</span>）：oar 抽象各家 CLI 的用量口径，Raft 把它投影、脱敏后送进自己的用量线。这是 oar 在 Raft 内部目前唯一的已知用途（grep 全仓仅 daemon 两处导入）。</p></div></div>
+<div class="finding"><div class="num">4</div><div><h4>架构上的三个设计点</h4><p>(a) daemon 的 per-runtime 驱动 + 事件归一化——12 种 runtime 各写一个 driver，把异构 CLI 事件流洗成统一形状；(b) sync-core 纯确定性同步状态机（RFC 043：无传输、无持久化、无时钟，帧/快照/差量进，域状态出）；(c) 两轴权限模型——Raft scopes 管工作区内能力，runtime+substrate 管工作区外的一切，两者正交。</p></div></div>
+<div class="finding"><div class="num">5</div><div><h4>Agent 是"被唤醒"的，不是常驻在线的</h4><p>靠 @mention、私信、Inbox、reminder（agent 自己写的定时唤醒，可 snooze）被唤起；凭据永不进 agent 手里，由 daemon 经本地 origin-bound 代理按次 broker。手册里专门有一节讲 agent 默认不能做什么（看不到你的浏览器标签页、动不了你的交互式终端）。</p></div></div>
+</div>
+</section>
+
+<!-- ============ 思维导图 ============ -->
+<section id="mindmap">
+<h2><span class="no">§M</span>交互思维导图</h2>
+<p class="lead">点节点前的 + / − 折叠展开，全貌与细节一图看完。</p>
+<div class="mm-tools">
+<button type="button" id="mm-expand">全部展开</button>
+<button type="button" id="mm-collapse">收起到二级</button>
+</div>
+<div class="mm" id="mm-root"></div>
+</section>
+
+<!-- ============ 1 公司 ============ -->
+<section id="basics">
+<h2><span class="no">§1</span>项目与公司</h2>
+<ul>
+<li><b>产品定义</b>：agent-native workspace——"team mode for your agents"。每个 agent 有持久身份、记忆（<span class="mono">$HOME/.raft/agents/{id}/</span> 下的 <span class="mono">MEMORY.md</span>，跨会话由 Raft 管理）、能力范围；跑在真进程里，可被 @、可认领任务、可互相转交工作。 <span class="src">🟢</span></li>
+<li><b>公司</b>：Botiverse, Inc.（LICENSE 署名 Copyright 2026 Botiverse, Inc.；"Raft" 名称与 logo 为其商标）。第三方指南称公司成立于 2025 年。 <span class="src">🟢🟡</span></li>
+<li><b>改名史</b>：曾叫 <b>Slock</b>，约 2026 年 7 月中 rebrand 为 Raft（<span class="mono">botiverse/hands</span> #279，"Repo is now Slock-free"）。旧痕迹全留作兼容层：<span class="mono">slock</span> CLI 别名、<span class="mono">@slock-ai/*</span> npm 包（shim 转发）、<span class="mono">$HOME/.slock</span> 数据目录、<span class="mono">SLOCK_AGENT_ID</span> 环境变量。 <span class="src">🟢</span></li>
+<li><b>时间线</b>：2026-09-15 创建本仓库（发布镜像）；官网 testimonials 已有 TiDB 联创（自称高峰期 agent 一天烧 12 亿 token——厂商证言，未核实）、Inferact CEO 等站台。 <span class="src">🟢🟡</span></li>
+<li><b>热度</b>：596 stars / 114 forks（2026-10-14），一个月内达此数；Issues 关闭、PR 自动关闭。 <span class="src">🟢</span></li>
+<li><b>商业</b>：托管服务 app.raft.build；Free / Pro（按 Pack 预购席位）/ Enterprise；计费按<b>预置容量</b>而非按量；Free 含小 agent 上限与 30 天消息历史。agent 迁移电脑（migration）是 Pro 功能。 <span class="src">🟢</span></li>
+</ul>
+</section>
+
+<!-- ============ 2 架构 ============ -->
+<section id="arch">
+<h2><span class="no">§2</span>架构：monorepo 九个包</h2>
+<div class="tbl"><table>
+<tr><th>包</th><th>内容</th><th>体量</th></tr>
+<tr><td class="mono">packages/server</td><td>API、Socket.IO 实时、Postgres/Redis/对象存储持久化、集成；多副本经 Redis pub/sub 的 <span class="mono">replicaRouter</span> 横向扩展</td><td>189M，最大</td></tr>
+<tr><td class="mono">packages/daemon</td><td>机器守护进程：按 runtime 启动 agent（12 种 driver＋事件归一化）、经本地代理 broker 凭据、inbox 状态机</td><td>6.9M</td></tr>
+<tr><td class="mono">packages/computer</td><td>Raft Computer 安装器/服务（SEA 二进制，不再走 npm），把一台机器注册进服务器</td><td>2.4M</td></tr>
+<tr><td class="mono">packages/web</td><td>Web 客户端</td><td>21M</td></tr>
+<tr><td class="mono">packages/cli</td><td><span class="mono">raft</span> 命令行（人、agent 共用；daemon 会把 CLI 注入 agent 进程）</td><td>3.2M</td></tr>
+<tr><td class="mono">packages/raft-sdk</td><td>客户端 SDK</td><td>568K</td></tr>
+<tr><td class="mono">packages/sync-core</td><td>纯确定性同步状态机（RFC 043）</td><td>556K</td></tr>
+<tr><td class="mono">packages/shared</td><td>契约与公共库；<span class="mono">trace-client</span>/<span class="mono">trace-upload-worker</span> 做 agent 运行轨迹采集</td><td>—</td></tr>
+<tr><td class="mono">manual/</td><td>产品手册，同时是 agent 的知识库（<span class="mono">raft manual get &lt;topic&gt;</span>，查之前要声明 intent/reason）</td><td>—</td></tr>
+</table></div>
+
+<h3>一次 agent 回合的路径</h3>
+<p class="lead">代码 + 手册交叉还原：</p>
+<div class="flow">
+<div class="flow node"><b>人/agent @ 它</b><span>频道、私信、Inbox</span></div><div class="flow arr">→</div>
+<div class="flow node"><b>server 路由</b><span>Socket.IO / Redis 到 agent 所在机器</span></div><div class="flow arr">→</div>
+<div class="flow node"><b>daemon 起进程</b><span>按 runtime 选 driver，CLI transport</span></div><div class="flow arr">→</div>
+<div class="flow node"><b>事件归一化</b><span>异构 CLI 事件洗成统一形状，写回 activity 流</span></div><div class="flow arr">→</div>
+<div class="flow node"><b>sync-core 同步</b><span>帧/快照/差量同步给各客户端</span></div>
+</div>
+<p>凭据全程不落地到 agent：daemon 用 per-launch token 经本地 origin-bound 代理代持。 <span class="src">🟢</span></p>
+
+<h3>Runtime 名单（12 家）</h3>
+<div class="versions">
+<span class="ver-chip"><b>Claude Code</b></span><span class="ver-chip"><b>Codex</b></span><span class="ver-chip"><b>Grok Build</b></span><span class="ver-chip"><b>Kimi Code</b></span><span class="ver-chip"><b>Cursor</b></span><span class="ver-chip"><b>OpenCode</b></span><span class="ver-chip"><b>Pi</b></span><span class="ver-chip"><b>Built-in Pi</b></span>
+</div>
+<p>deprecated 保留：Antigravity、Copilot、Gemini、Kimi CLI。一个 agent 一生只用一种 runtime，但同一服务器里不同 agent 可混搭；runtime 按<b>电脑</b>安装，不按服务器。另有 <b>external-agent</b>：你自己的机器/runtime，用 <span class="mono">raft agent login</span> 接入即为正式成员。 <span class="src">🟢</span></p>
+
+<h3>协作机制</h3>
+<ul>
+<li><b>task</b>：认领制工作项，建在消息之上</li>
+<li><b>inbox</b>：跨 surface 注意力聚合；<b>reminder</b>：agent 自设定时唤醒，可 snooze</li>
+<li><b>action-cards</b>：agent 代笔、人类 commit 的落印模式</li>
+<li><b>joint-channel</b>：跨服共享频道，消息/回执同步</li>
+</ul>
+</section>
+
+<!-- ============ 3 权限与安全 ============ -->
+<section id="security">
+<h2><span class="no">§3</span>权限与安全模型</h2>
+<h3>两轴正交（手册 <span class="mono">agent-access-boundaries</span> 原话）</h3>
+<div class="cards">
+<div class="card"><h4>① Raft scopes——工作区内</h4><ul>
+<li>发消息、读历史、认领任务、发 Action Card</li>
+<li>admin 授予、endpoint 层强制执行</li>
+<li>缺了就 <span class="mono">SCOPE_DENIED</span>，agent 不能自授</li>
+</ul></div>
+<div class="card"><h4>② runtime + substrate——工作区外</h4><ul>
+<li>文件、GitHub、浏览器、终端、第三方 API</li>
+<li>取决于 runtime 的工具基线 × substrate（你的电脑）实际给到什么</li>
+</ul></div>
+</div>
+<ul>
+<li><b>凭据隔离</b>：agent 永远不直接持有服务端凭据；revoke 一个 session 会连带驱逐它的 realtime 订阅；频道可见性只在一处（<span class="mono">canUserAccessChannel</span>）强制执行，HTTP/订阅/回放统一走它。 <span class="src">🟢</span></li>
+<li><b>边界说明</b>：手册明说 agent 默认不能看你的浏览器标签页、不能进你的交互式终端、进 Raft 工作区不等于拿到你的 GitHub。 <span class="src">🟢</span></li>
+<li><b>漏洞政策</b>：security@raft.build 私下报告，3 个工作日确认；scope 明确排除"需要攻陷用户设备"的发现。 <span class="src">🟢</span></li>
+</ul>
+</section>
+
+<!-- ============ 4 oar 关系 ============ -->
+<section id="oar">
+<h2><span class="no">§4</span>与 oar 的关系</h2>
+<ul>
+<li><span class="mono">packages/daemon/package.json</span> 依赖 <span class="mono">"@botiverse/oar": "0.56.0"</span>；<span class="mono">packages/daemon/src/runtimeAccountUsage/oarAdapter.ts</span> 把 oar 的 <span class="mono">AccountUsageSnapshot</span>（各家 runtime 的用量口径）投影、脱敏（邮箱掩码、窗口上限 12）后送进 Raft 的用量管线。 <span class="src">🟢</span></li>
+<li>oar（Apache-2.0）与 Raft（FSL-1.1-ALv2）采用不同的许可证：前者是标准开源许可证，后者是 source-available 许可证。Raft 的 daemon 在用量采集路径上依赖 oar，是 oar 的下游使用者之一。 <span class="src">🟢</span></li>
+<li>oar 在 Raft 内部目前仅出现在用量采集这一处（grep 全仓仅 daemon 两处导入）；daemon 的核心执行（各 runtime driver、事件归一化、CLI transport）是 Raft 自有代码。 <span class="src">🟢</span></li>
+</ul>
+<div class="callout good"><p><b>同源核实</b>：oar（<span class="mono">botiverse/oar</span>，2026-08-05 创建，Apache-2.0）与 raft-source 属同一 GitHub org、同一公司（Botiverse, Inc.）。npm 上 <span class="mono">@botiverse/oar</span> 最新为 0.63.0，Raft daemon 声明依赖 0.56.0。</p></div>
+</section>
+
+<!-- ============ 5 许可 ============ -->
+<section id="license">
+<h2><span class="no">§5</span>许可（逐字核对 LICENSE）</h2>
+<ul>
+<li><b>FSL-1.1-ALv2</b>：Functional Source License，未来许可证为 Apache-2.0。Permitted Purpose = "除 Competing Use 外的任何目的"；Competing Use 指把软件放进<b>替代本软件或 Botiverse 其它产品的商业产品/服务</b>里提供给他人。 <span class="src">🟢</span></li>
+<li><b>两年转正</b>：每个版本自发布满两年自动适用 Apache-2.0。2026-09 的版本要到 2028-09 才转为 Apache-2.0。 <span class="src">🟢</span></li>
+<li><b>三不</b>：不收 PR（自动关闭）、不开 Issues（走应用内反馈）、商标另行保留。 <span class="src">🟢</span></li>
+<li><b>快照滞后</b>：线上跑最新版，镜像快照在部署<b>之后</b>才导出——你看到的源码通常比线上旧一拍。 <span class="src">🟢</span></li>
+</ul>
+
+<h3>使用前需了解的事实</h3>
+<div class="callout warn">
+<p>① FSL-1.1-ALv2 规定：除 Competing Use（将软件用于替代 Raft 或 Botiverse 其它产品的商业产品/服务）外可自由使用；每个版本满两年后自动转为 Apache-2.0。</p>
+<p>② agent 使用用户自己的模型订阅与 key（官网 FAQ 原话 "on your own subscriptions and keys"）；多人共用同一订阅的场景，条款适用情况未在 Raft 官方文本中找到说明。</p>
+<p>③ 凭据 broker、用量采集、replica 路由均经过 Botiverse 的代码与托管面；发布镜像的快照在部署之后才导出，快照版本通常滞后于线上运行版本。</p>
+<p>④ 第三方集成、recipes/playbook 刚起步（<span class="mono">manual/recipes</span> 下已有 archetype/playbook 骨架）；仓库不收 PR、不开 Issues。</p>
+</div>
+</section>
+
+<!-- ============ 未核实 ============ -->
+<section id="open">
+<h2><span class="no">§?</span>未核实 / 开放问题</h2>
+<ul>
+<li>596 stars 的增长曲线与真实用户规模（无公开数据；官网 testimonials 为厂商证言）。</li>
+<li>"Hermes Agent"（官网 FAQ runtime 名单里有，daemon drivers 里没有）是何物——可能是自研 runtime，未核实。</li>
+<li>oar 在 Raft 内部除用量采集外是否还有更深集成（私有仓库不可见，只能看快照）。</li>
+<li>Free/Pro 的具体价格与 agent 上限（官网定价面为准，未收录）。</li>
+</ul>
+</section>
+
+</main>
+
+<footer>
+<div class="wrap">
+<p><b>主要来源</b>（仓库与官网原文 / 媒体与指南；调研日期 2026-10-14）</p>
+<ul>
+<li>仓库主页与 README：<a href="https://github.com/botiverse/raft-source">github.com/botiverse/raft-source</a></li>
+<li>许可证：<a href="https://github.com/botiverse/raft-source/blob/HEAD/LICENSE">LICENSE（FSL-1.1-ALv2 全文）</a> · <a href="https://github.com/botiverse/raft-source/blob/HEAD/CONTRIBUTING.md">CONTRIBUTING.md</a> · <a href="https://github.com/botiverse/raft-source/blob/HEAD/SECURITY.md">SECURITY.md</a></li>
+<li>手册：<a href="https://github.com/botiverse/raft-source/tree/HEAD/manual/agent-knowledge">manual/agent-knowledge/</a>（index、runtime、agent、scopes-and-permissions、agent-access-boundaries、rename-slock-to-raft、terminology-canon、pricing-safe-answer、computer）</li>
+<li>关键源码：<a href="https://github.com/botiverse/raft-source/blob/HEAD/packages/daemon/src/runtimeAccountUsage/oarAdapter.ts">daemon/src/runtimeAccountUsage/oarAdapter.ts</a> · <a href="https://github.com/botiverse/raft-source/blob/HEAD/packages/daemon/package.json">daemon/package.json</a> · <a href="https://github.com/botiverse/raft-source/blob/HEAD/packages/sync-core/src/types.ts">sync-core/src/types.ts</a> · <a href="https://github.com/botiverse/raft-source/blob/HEAD/packages/server/src/replicaRouter.ts">server/src/replicaRouter.ts</a></li>
+<li>oar：<a href="https://github.com/botiverse/oar">botiverse/oar</a> · <a href="https://www.npmjs.com/package/@botiverse/oar">@botiverse/oar（npm）</a></li>
+<li>官网：<a href="https://raft.build/">raft.build</a>（定位、FAQ、testimonials，2026-10-14 抓取）</li>
+<li>第三方指南：WhiteWorld/codepick（公司 2025 年成立、Slock→Raft 背景，2026-08-13）· <a href="https://github.com/botiverse/hands/pull/279">botiverse/hands #279</a>（Slock→Raft 改名 PR，2026-07）</li>
+</ul>
+<p>本页为静态调研快照，数据截至 2026-10-14；项目迭代较快，引用数字前请回源核对。本报告为独立第三方调研，与原项目无关。</p>
+</div>
+</footer>
+
+<script>
+/* ---------- mindmap ---------- */
+var MM = {
+t: "Raft", children: [
+{ t: "一句话", children: [
+{ t: "Botiverse 的 agent 原生工作区：team mode for your agents"},
+{ t: "agent = 长期在编队友：身份、记忆、能力范围，真进程跑在真机器"},
+{ t: "频道 / 私信 / 任务 / @mention，人与 agent 并肩协作"},
+{ t: "曾用名 Slock，2026-07 改名；旧名全留作兼容层"}
+]},
+{ t: "公司与时间线", children: [
+{ t: "主体 Botiverse, Inc.（LICENSE 署名）"},
+{ t: "创始人 Richard Qian（stdrc），Kimi CLI 前负责人", note: "调研者前期观察"},
+{ t: "第三方指南称公司成立于 2025", note: "二手"},
+{ t: "2026-09-15：发布镜像仓库创建"},
+{ t: "596 stars / 114 forks（2026-10-14）；Issues 关闭、PR 自动关闭"}
+]},
+{ t: "架构：monorepo", children: [
+{ t: "server：API + Socket.IO 实时 + Postgres/Redis/对象存储；replicaRouter 经 Redis pub/sub 横向扩展"},
+{ t: "daemon：机器守护进程，12 种 runtime driver + 事件归一化，凭据本地代理代持"},
+{ t: "computer：SEA 二进制安装器，把机器注册进服务器（不再走 npm）"},
+{ t: "web：客户端；cli：人/agent 共用，daemon 注入 agent 进程"},
+{ t: "sync-core：纯确定性同步状态机（RFC 043），帧/快照/差量，无传输无时钟"},
+{ t: "trace-client / trace-upload-worker：agent 运行轨迹采集"},
+{ t: "manual/：产品手册即 agent 知识库"}
+]},
+{ t: "runtime：12 种可混搭", children: [
+{ t: "Claude Code / Codex / Grok Build / Kimi Code（新首选）/ Cursor / OpenCode / Pi / Built-in Pi"},
+{ t: "deprecated：Antigravity / Copilot / Gemini / Kimi CLI"},
+{ t: "一个 agent 一生一种 runtime；同服不同 agent 可混搭；runtime 按电脑安装"},
+{ t: "external-agent：自带机器与 runtime，raft agent login 接入即正式成员"},
+{ t: "用你自己的模型订阅与 key（官网 FAQ 原话）"}
+]},
+{ t: "协作机制", children: [
+{ t: "task：认领制工作项，建在消息之上"},
+{ t: "inbox：跨 surface 注意力聚合；reminder：agent 自设定时唤醒，可 snooze"},
+{ t: "action-cards：agent 代笔、人类 commit 的落印模式"},
+{ t: "joint-channel：跨服共享频道，消息/回执同步"}
+]},
+{ t: "权限：两轴正交", children: [
+{ t: "Raft scopes：工作区内能力，admin 授予，缺了就 SCOPE_DENIED，agent 不能自授"},
+{ t: "runtime + substrate：工作区外的一切，取决于 runtime 工具基线 × 你的电脑"},
+{ t: "手册原话：最常见的用户困惑就是把两轴混为一谈"},
+{ t: "凭据永不进 agent 手；revoke 会话连带驱逐 realtime 订阅"},
+{ t: "默认看不到你的浏览器标签页，进不了你的交互式终端"}
+]},
+{ t: "与 oar 的关系", children: [
+{ t: "daemon 依赖 @botiverse/oar@0.56.0（npm 最新 0.63.0）"},
+{ t: "只用于 runtime 账号用量采集与适配（oarAdapter.ts：投影、脱敏、窗口上限）"},
+{ t: "oar（Apache-2.0）与 Raft（FSL）许可不同；用量采集是 oar 在 Raft 内的唯一已知用途"},
+{ t: "daemon 核心执行（driver、事件归一化、CLI transport）为 Raft 自有代码"}
+]},
+{ t: "许可：看得见 ≠ 开源", children: [
+{ t: "FSL-1.1-ALv2：可读可跑可改，禁竞争性商用；版本满两年自动转 Apache-2.0"},
+{ t: "仓库是单向发布镜像：私有开发，一 release 一 snapshot commit"},
+{ t: "不收 PR（自动关闭）、不开 Issues；快照通常比线上旧一拍"},
+{ t: "snapshot 由自家 agent 提交（Tenny@agents.stamp.build）"}
+]},
+{ t: "使用注意", children: [
+{ t: "Competing Use 以 LICENSE 文本为准；2026-09 版本 2028-09 转 Apache-2.0"},
+{ t: "agent 用用户自有订阅与 key（官网 FAQ）；多人共用场景条款未在官方文本中找到说明"},
+{ t: "凭据 broker 与用量采集都经过 Botiverse 代码与托管面"},
+{ t: "生态（recipes/playbook）刚起步；仓库不收 PR、不开 Issues"}
+]},
+{ t: "未核实", children: [
+{ t: "Hermes Agent 是何物（官网 FAQ 有，drivers 里没有）"},
+{ t: "oar 在私有仓是否有更深集成"},
+{ t: "Free/Pro 具体价格与 agent 上限"}
+]}
+]
+};
+
+function buildMM(node, depth) {
+var li = document.createElement("li");
+if (depth === 0) li.className = "root";
+if (depth === 1) li.className = "l1";
+var row = document.createElement("div"); row.className = "row";
+var hasKids = node.children && node.children.length;
+if (hasKids) {
+var btn = document.createElement("button");
+btn.type = "button"; btn.className = "tw"; btn.textContent = "−";
+btn.setAttribute("aria-label", "折叠/展开");
+btn.addEventListener("click", function () {
+li.classList.toggle("closed");
+btn.textContent = li.classList.contains("closed")? "+": "−";
+});
+row.appendChild(btn);
+} else {
+var dot = document.createElement("span"); dot.className = "leaf-dot"; dot.textContent = "·";
+row.appendChild(dot);
+}
+var txt = document.createElement("span"); txt.className = "txt"; txt.textContent = node.t;
+row.appendChild(txt);
+if (node.note) {
+var n = document.createElement("span"); n.className = "note"; n.textContent = "（" + node.note + "）";
+row.appendChild(n);
+}
+li.appendChild(row);
+if (hasKids) {
+var ul = document.createElement("ul");
+node.children.forEach(function (c) { ul.appendChild(buildMM(c, depth + 1));});
+li.appendChild(ul);
+}
+return li;
+}
+var mmRoot = document.getElementById("mm-root");
+var topUl = document.createElement("ul");
+topUl.appendChild(buildMM(MM, 0));
+mmRoot.appendChild(topUl);
+
+function setAll(closed, maxDepth) {
+var items = mmRoot.querySelectorAll("li");
+items.forEach(function (li) {
+var depth = 0, p = li.parentElement;
+while (p && p!== mmRoot) { if (p.tagName === "UL") depth++; p = p.parentElement;}
+var hide = closed && depth > maxDepth;
+li.classList.toggle("closed", hide);
+var b = li.querySelector(":scope >.row >.tw");
+if (b) b.textContent = hide? "+": "−";
+});
+}
+document.getElementById("mm-expand").addEventListener("click", function () { setAll(false, 99);});
+document.getElementById("mm-collapse").addEventListener("click", function () { setAll(true, 1);});
+setAll(true, 1);
+
+/* ---------- scrollspy ---------- */
+var links = Array.prototype.slice.call(document.querySelectorAll("nav.toc a"));
+var map = {};
+links.forEach(function (a) { map[a.getAttribute("href").slice(1)] = a;});
+var obs = new IntersectionObserver(function (entries) {
+entries.forEach(function (e) {
+if (e.isIntersecting) {
+links.forEach(function (a) { a.classList.remove("on");});
+var a = map[e.target.id];
+if (a) a.classList.add("on");
+}
+});
+}, { rootMargin: "-30% 0px -60% 0px"});
+document.querySelectorAll("section[id]").forEach(function (s) { obs.observe(s);});
+</script>
+</body>
+</html>
